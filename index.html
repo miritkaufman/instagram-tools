@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מנהל עוקבים באינסטגרם</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; margin: 0; padding: 20px; color: #262626; }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1, h2 { text-align: center; }
+        .upload-section { background: white; border: 1px solid #dbdbdb; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-weight: bold; margin-bottom: 8px; }
+        input[type="file"] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #dbdbdb; border-radius: 4px; background-color: #fafafa; }
+        
+        /* עיצוב לכפתורי בחירת הפרופיל */
+        .profile-buttons { display: flex; gap: 15px; }
+        .profile-btn { flex: 1; padding: 15px; background-color: white; border: 2px solid #dbdbdb; border-radius: 8px; font-size: 18px; font-weight: bold; color: #8e8e8e; cursor: pointer; transition: all 0.2s ease; }
+        .profile-btn.active { border-color: #0095f6; background-color: #e8f4fd; color: #0095f6; }
+        
+        .btn { display: block; width: 100%; background-color: #0095f6; color: white; padding: 15px; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; text-align: center; margin-top: 10px; }
+        .btn:active { background-color: #0074cc; }
+        .btn:disabled { background-color: #b2dffc; cursor: not-allowed; }
+        
+        #loading { text-align: center; font-weight: bold; color: #0095f6; display: none; margin: 20px 0; font-size: 16px; }
+        
+        .user-card { background: white; border: 1px solid #dbdbdb; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; }
+        .username { font-size: 18px; font-weight: bold; }
+        .date { font-size: 14px; color: #8e8e8e; }
+        .buttons { display: flex; gap: 10px; }
+        .link-btn { flex: 1; text-align: center; background-color: #0095f6; color: white; padding: 12px; text-decoration: none; border-radius: 6px; font-size: 15px; font-weight: bold; }
+        .delete-btn { flex: 1; text-align: center; background-color: #ed4956; color: white; padding: 12px; border: none; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>סורק לא עוקבים</h1>
+        
+        <!-- אזור הגדרות והעלאת קבצים -->
+        <div class="upload-section" id="setupSection">
+            <div class="form-group">
+                <label>מי סורק עכשיו?</label>
+                <div class="profile-buttons">
+                    <button type="button" class="profile-btn" onclick="selectProfile('mirit', this)">מירית</button>
+                    <button type="button" class="profile-btn" onclick="selectProfile('sediel', this)">סדיאל</button>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>קובץ following.json</label>
+                <input type="file" id="followingFile" accept=".json" required>
+            </div>
+            
+            <div class="form-group">
+                <label>קובצי followers (אפשר לבחור כמה יחד)</label>
+                <input type="file" id="followersFiles" accept=".json" multiple required>
+            </div>
+            
+            <button class="btn" id="runBtn" onclick="processFiles()">סרוק נתונים</button>
+        </div>
+
+        <div id="loading">מעבד נתונים ומתחבר לענן, אנא להמתין...</div>
+
+        <!-- אזור התוצאות -->
+        <div id="resultsSection" style="display: none;">
+            <h2>לא עוקבים חזרה (<span id="counter">0</span>)</h2>
+            <div id="cardsContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        // === הגדרות ===
+        const FIREBASE_DB_URL = 'YOUR_URL_HERE'; // להדביק כאן את הקישור לפיירבייס
+        // =============
+
+        let currentProfile = '';
+
+        // פונקציה לבחירת הפרופיל והדגשת הכפתור
+        function selectProfile(name, btnElement) {
+            currentProfile = name;
+            
+            // מסיר את העיצוב הפעיל מכל הכפתורים
+            const buttons = document.querySelectorAll('.profile-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            
+            // מוסיף את העיצוב הפעיל לכפתור שנלחץ
+            btnElement.classList.add('active');
+        }
+
+        function extractUsername(item) {
+            if (item.title) return item.title;
+            if (item.string_list_data && item.string_list_data.length > 0) {
+                const data = item.string_list_data[0];
+                if (data.value && data.value !== 'undefined') return data.value;
+                if (data.href) {
+                    const match = data.href.match(/instagram\.com\/([^\/?]+)/);
+                    if (match) return match[1];
+                }
+            }
+            return null;
+        }
+
+        function readFileAsJSON(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(JSON.parse(e.target.result));
+                reader.onerror = (e) => reject(e);
+                reader.readAsText(file);
+            });
+        }
+
+        async function processFiles() {
+            const followingFile = document.getElementById('followingFile').files[0];
+            const followersFiles = document.getElementById('followersFiles').files;
+
+            if (!currentProfile) {
+                alert('אנא בחרו פרופיל (מירית או סדיאל) לפני הסריקה.');
+                return;
+            }
+
+            if (!followingFile || followersFiles.length === 0) {
+                alert('אנא בחרו את קובץ ה-following ואת קובצי ה-followers.');
+                return;
+            }
+
+            document.getElementById('runBtn').disabled = true;
+            document.getElementById('setupSection').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+
+            try {
+                // משיכת רשימת התעלמות מפיירבייס
+                const ignoredSet = new Set();
+                try {
+                    const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json`);
+                    const ignoredData = await response.json();
+                    if (ignoredData && typeof ignoredData === 'object') {
+                        Object.keys(ignoredData).forEach(username => ignoredSet.add(username));
+                    }
+                } catch (e) {
+                    console.log('לא נמצאו נתונים בפיירבייס או שגיאת חיבור.');
+                }
+
+                // עיבוד קובצי העוקבים
+                const followersSet = new Set();
+                for (let i = 0; i < followersFiles.length; i++) {
+                    const data = await readFileAsJSON(followersFiles[i]);
+                    data.forEach(item => {
+                        const username = extractUsername(item);
+                        if (username) followersSet.add(username);
+                    });
+                }
+
+                // עיבוד קובץ הנעקבים והצלבה
+                const followingDataRaw = await readFileAsJSON(followingFile);
+                const followingArray = followingDataRaw.relationships_following || followingDataRaw;
+                const notFollowingBack = [];
+
+                followingArray.forEach(item => {
+                    const username = extractUsername(item);
+                    if (username && item.string_list_data && item.string_list_data.length > 0) {
+                        const timestamp = item.string_list_data[0].timestamp;
+                        if (!followersSet.has(username) && !ignoredSet.has(username)) {
+                            notFollowingBack.push({ username, timestamp });
+                        }
+                    }
+                });
+
+                notFollowingBack.sort((a, b) => a.timestamp - b.timestamp);
+                renderResults(notFollowingBack);
+
+            } catch (error) {
+                alert('אירעה שגיאה בעיבוד הקבצים. ודאו שהעליתם את קובצי ה-JSON הנכונים.');
+                console.error(error);
+                document.getElementById('runBtn').disabled = false;
+                document.getElementById('setupSection').style.display = 'block';
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function renderResults(users) {
+            document.getElementById('resultsSection').style.display = 'block';
+            document.getElementById('counter').innerText = users.length;
+            
+            const container = document.getElementById('cardsContainer');
+            container.innerHTML = ''; 
+
+            users.forEach(user => {
+                const date = new Date(user.timestamp * 1000).toLocaleDateString('he-IL');
+                const profileLink = `https://www.instagram.com/${user.username}/`;
+                
+                const card = document.createElement('div');
+                card.className = 'user-card';
+                card.innerHTML = `
+                    <div class="username">${user.username}</div>
+                    <div class="date">הוחל מעקב בתאריך: ${date}</div>
+                    <div class="buttons">
+                        <a href="${profileLink}" target="_blank" class="link-btn">פתיחת פרופיל</a>
+                        <button class="delete-btn" onclick="removeCard(this, '${user.username}')">מחק והתעלם</button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        async function removeCard(button, username) {
+            const card = button.closest('.user-card');
+            card.style.display = 'none';
+            
+            const currentCount = parseInt(document.getElementById('counter').innerText);
+            document.getElementById('counter').innerText = Math.max(0, currentCount - 1);
+            
+            try {
+                await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored/${username}.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(true)
+                });
+            } catch (error) {
+                console.error('שגיאה בעדכון מסד הנתונים:', error);
+            }
+        }
+    </script>
+</body>
+</html>
