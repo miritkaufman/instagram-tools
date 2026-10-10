@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>מנהל עוקבים באינסטגרם</title>
     <script>
-        // תופס שגיאות JS ומקפיץ אותן למסך כדי שלא נצטרך לנחש
         window.onerror = function(msg, url, line) {
             alert("שגיאת סקריפט: " + msg + "\nשורה: " + line);
             return false;
@@ -78,7 +77,7 @@
         </div>
 
         <!-- תווית זיהוי גרסה לשבירת קאש -->
-        <div style="text-align: center; margin-top: 30px; color: #ccc; font-size: 13px;">גרסה 2.1</div>
+        <div style="text-align: center; margin-top: 30px; color: #ccc; font-size: 13px;">גרסה 2.2 (עוקף זיכרון ותומך בנקודות)</div>
     </div>
 
     <script>
@@ -117,6 +116,14 @@
             });
         }
 
+        // עקיפת בעיית הנקודות בשמות משתמש מול פיירבייס
+        function encodeUsername(username) {
+            return username.replace(/\./g, '_DOT_');
+        }
+        function decodeUsername(key) {
+            return key.replace(/_DOT_/g, '.');
+        }
+
         async function loadLastScan() {
             document.getElementById('setupSection').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
@@ -124,14 +131,20 @@
             try {
                 const ignoredSet = new Set();
                 try {
-                    const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json`);
+                    // הוספת חותמת זמן כדי למנוע מהדפדפן להשתמש בזיכרון ישן (Cache)
+                    const timeNow = new Date().getTime();
+                    const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json?t=${timeNow}`);
                     const ignoredData = await response.json();
+                    
                     if (ignoredData && typeof ignoredData === 'object') {
-                        Object.keys(ignoredData).forEach(username => ignoredSet.add(username));
+                        Object.keys(ignoredData).forEach(key => {
+                            ignoredSet.add(decodeUsername(key));
+                        });
                     }
                 } catch (e) { console.log('אין רשימת התעלמות'); }
 
-                const scanResponse = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_last_scan.json`);
+                const timeNow2 = new Date().getTime();
+                const scanResponse = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_last_scan.json?t=${timeNow2}`);
                 const lastScanData = await scanResponse.json();
 
                 if (!lastScanData || !Array.isArray(lastScanData)) {
@@ -168,10 +181,13 @@
             try {
                 const ignoredSet = new Set();
                 try {
-                    const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json`);
+                    const timeNow = new Date().getTime();
+                    const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json?t=${timeNow}`);
                     const ignoredData = await response.json();
                     if (ignoredData && typeof ignoredData === 'object') {
-                        Object.keys(ignoredData).forEach(username => ignoredSet.add(username));
+                        Object.keys(ignoredData).forEach(key => {
+                            ignoredSet.add(decodeUsername(key));
+                        });
                     }
                 } catch (e) {}
 
@@ -255,7 +271,8 @@
             document.getElementById('counter').innerText = Math.max(0, currentCount - 1);
             
             try {
-                await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored/${username}.json`, {
+                const safeUsername = encodeUsername(username);
+                await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored/${safeUsername}.json`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(true)
