@@ -13,14 +13,14 @@
         label { display: block; font-weight: bold; margin-bottom: 8px; }
         input[type="file"] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #dbdbdb; border-radius: 4px; background-color: #fafafa; }
         
-        /* עיצוב לכפתורי בחירת הפרופיל */
         .profile-buttons { display: flex; gap: 15px; }
         .profile-btn { flex: 1; padding: 15px; background-color: white; border: 2px solid #dbdbdb; border-radius: 8px; font-size: 18px; font-weight: bold; color: #8e8e8e; cursor: pointer; transition: all 0.2s ease; }
         .profile-btn.active { border-color: #0095f6; background-color: #e8f4fd; color: #0095f6; }
         
         .btn { display: block; width: 100%; background-color: #0095f6; color: white; padding: 15px; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; text-align: center; margin-top: 10px; }
         .btn:active { background-color: #0074cc; }
-        .btn:disabled { background-color: #b2dffc; cursor: not-allowed; }
+        .btn-success { background-color: #28a745; margin-bottom: 15px; }
+        .btn-success:active { background-color: #218838; }
         
         #loading { text-align: center; font-weight: bold; color: #0095f6; display: none; margin: 20px 0; font-size: 16px; }
         
@@ -46,20 +46,26 @@
                 </div>
             </div>
             
-            <div class="form-group">
-                <label>קובץ following.json</label>
-                <input type="file" id="followingFile" accept=".json" required>
-            </div>
+            <!-- כפתור לטעינה מהירה מהענן -->
+            <button class="btn btn-success" id="loadSavedBtn" onclick="loadLastScan()" style="display: none;">טען רשימה מסריקה קודמת מהענן</button>
             
-            <div class="form-group">
-                <label>קובצי followers (אפשר לבחור כמה יחד)</label>
-                <input type="file" id="followersFiles" accept=".json" multiple required>
+            <div id="newScanSection" style="display: none; border-top: 1px solid #dbdbdb; padding-top: 20px; margin-top: 10px;">
+                <label style="color: #ed4956; margin-bottom: 15px;">או סריקה של נתונים חדשים מאינסטגרם:</label>
+                <div class="form-group">
+                    <label>קובץ following.json</label>
+                    <input type="file" id="followingFile" accept=".json">
+                </div>
+                
+                <div class="form-group">
+                    <label>קובצי followers</label>
+                    <input type="file" id="followersFiles" accept=".json" multiple>
+                </div>
+                
+                <button class="btn" id="runBtn" onclick="processFiles()">סרוק נתונים חדשים</button>
             </div>
-            
-            <button class="btn" id="runBtn" onclick="processFiles()">סרוק נתונים</button>
         </div>
 
-        <div id="loading">מעבד נתונים ומתחבר לענן, אנא להמתין...</div>
+        <div id="loading">טוען נתונים מהענן, אנא להמתין...</div>
 
         <!-- אזור התוצאות -->
         <div id="resultsSection" style="display: none;">
@@ -70,21 +76,20 @@
 
     <script>
         // === הגדרות ===
-        const FIREBASE_DB_URL = 'YOUR_URL_HERE'; // להדביק כאן את הקישור לפיירבייס
+        const FIREBASE_DB_URL = 'https://instagram-tools-db-default-rtdb.firebaseio.com';
         // =============
 
         let currentProfile = '';
 
-        // פונקציה לבחירת הפרופיל והדגשת הכפתור
         function selectProfile(name, btnElement) {
             currentProfile = name;
             
-            // מסיר את העיצוב הפעיל מכל הכפתורים
             const buttons = document.querySelectorAll('.profile-btn');
             buttons.forEach(btn => btn.classList.remove('active'));
-            
-            // מוסיף את העיצוב הפעיל לכפתור שנלחץ
             btnElement.classList.add('active');
+            
+            document.getElementById('loadSavedBtn').style.display = 'block';
+            document.getElementById('newScanSection').style.display = 'block';
         }
 
         function extractUsername(item) {
@@ -109,26 +114,11 @@
             });
         }
 
-        async function processFiles() {
-            const followingFile = document.getElementById('followingFile').files[0];
-            const followersFiles = document.getElementById('followersFiles').files;
-
-            if (!currentProfile) {
-                alert('אנא בחרו פרופיל (מירית או סדיאל) לפני הסריקה.');
-                return;
-            }
-
-            if (!followingFile || followersFiles.length === 0) {
-                alert('אנא בחרו את קובץ ה-following ואת קובצי ה-followers.');
-                return;
-            }
-
-            document.getElementById('runBtn').disabled = true;
+        async function loadLastScan() {
             document.getElementById('setupSection').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
 
             try {
-                // משיכת רשימת התעלמות מפיירבייס
                 const ignoredSet = new Set();
                 try {
                     const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json`);
@@ -136,11 +126,52 @@
                     if (ignoredData && typeof ignoredData === 'object') {
                         Object.keys(ignoredData).forEach(username => ignoredSet.add(username));
                     }
-                } catch (e) {
-                    console.log('לא נמצאו נתונים בפיירבייס או שגיאת חיבור.');
+                } catch (e) { console.log('אין רשימת התעלמות'); }
+
+                const scanResponse = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_last_scan.json`);
+                const lastScanData = await scanResponse.json();
+
+                if (!lastScanData || !Array.isArray(lastScanData)) {
+                    alert('לא נמצאה סריקה קודמת בענן. אנא העלו קבצים וסירקו נתונים חדשים בפעם הראשונה.');
+                    document.getElementById('setupSection').style.display = 'block';
+                    return;
                 }
 
-                // עיבוד קובצי העוקבים
+                const finalUsers = lastScanData.filter(user => !ignoredSet.has(user.username));
+                renderResults(finalUsers);
+
+            } catch (error) {
+                alert('שגיאה בטעינת הנתונים מהענן.');
+                console.error(error);
+                document.getElementById('setupSection').style.display = 'block';
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        async function processFiles() {
+            const followingFile = document.getElementById('followingFile').files[0];
+            const followersFiles = document.getElementById('followersFiles').files;
+
+            if (!followingFile || followersFiles.length === 0) {
+                alert('אנא בחרו את קובץ ה-following ואת קובצי ה-followers.');
+                return;
+            }
+
+            document.getElementById('setupSection').style.display = 'none';
+            document.getElementById('loading').innerText = 'מעבד נתונים ושומר לענן, אנא להמתין...';
+            document.getElementById('loading').style.display = 'block';
+
+            try {
+                const ignoredSet = new Set();
+                try {
+                    const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json`);
+                    const ignoredData = await response.json();
+                    if (ignoredData && typeof ignoredData === 'object') {
+                        Object.keys(ignoredData).forEach(username => ignoredSet.add(username));
+                    }
+                } catch (e) {}
+
                 const followersSet = new Set();
                 for (let i = 0; i < followersFiles.length; i++) {
                     const data = await readFileAsJSON(followersFiles[i]);
@@ -150,7 +181,6 @@
                     });
                 }
 
-                // עיבוד קובץ הנעקבים והצלבה
                 const followingDataRaw = await readFileAsJSON(followingFile);
                 const followingArray = followingDataRaw.relationships_following || followingDataRaw;
                 const notFollowingBack = [];
@@ -166,60 +196,17 @@
                 });
 
                 notFollowingBack.sort((a, b) => a.timestamp - b.timestamp);
+
+                try {
+                    await fetch(`${FIREBASE_DB_URL}/${currentProfile}_last_scan.json`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(notFollowingBack)
+                    });
+                } catch (err) {
+                    console.error('שגיאה בשמירת הסריקה לענן:', err);
+                }
+
                 renderResults(notFollowingBack);
 
-            } catch (error) {
-                alert('אירעה שגיאה בעיבוד הקבצים. ודאו שהעליתם את קובצי ה-JSON הנכונים.');
-                console.error(error);
-                document.getElementById('runBtn').disabled = false;
-                document.getElementById('setupSection').style.display = 'block';
-            } finally {
-                document.getElementById('loading').style.display = 'none';
-            }
-        }
-
-        function renderResults(users) {
-            document.getElementById('resultsSection').style.display = 'block';
-            document.getElementById('counter').innerText = users.length;
-            
-            const container = document.getElementById('cardsContainer');
-            container.innerHTML = ''; 
-
-            users.forEach(user => {
-                const date = new Date(user.timestamp * 1000).toLocaleDateString('he-IL');
-                const profileLink = `https://www.instagram.com/${user.username}/`;
-                
-                const card = document.createElement('div');
-                card.className = 'user-card';
-                card.innerHTML = `
-                    <div class="username">${user.username}</div>
-                    <div class="date">הוחל מעקב בתאריך: ${date}</div>
-                    <div class="buttons">
-                        <a href="${profileLink}" target="_blank" class="link-btn">פתיחת פרופיל</a>
-                        <button class="delete-btn" onclick="removeCard(this, '${user.username}')">מחק והתעלם</button>
-                    </div>
-                `;
-                container.appendChild(card);
-            });
-        }
-
-        async function removeCard(button, username) {
-            const card = button.closest('.user-card');
-            card.style.display = 'none';
-            
-            const currentCount = parseInt(document.getElementById('counter').innerText);
-            document.getElementById('counter').innerText = Math.max(0, currentCount - 1);
-            
-            try {
-                await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored/${username}.json`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(true)
-                });
-            } catch (error) {
-                console.error('שגיאה בעדכון מסד הנתונים:', error);
-            }
-        }
-    </script>
-</body>
-</html>
+            } catch (error
