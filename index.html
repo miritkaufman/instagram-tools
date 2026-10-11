@@ -27,6 +27,9 @@
         .btn:active { background-color: #0074cc; }
         .btn-success { background-color: #28a745; margin-bottom: 15px; }
         .btn-success:active { background-color: #218838; }
+        .btn-secondary { background-color: #6c757d; margin-bottom: 15px; }
+        .btn-secondary:active { background-color: #5a6268; }
+        .btn-back { background-color: #8e8e8e; margin-bottom: 20px; }
         
         #loading { text-align: center; font-weight: bold; color: #0095f6; display: none; margin: 20px 0; font-size: 16px; }
         
@@ -34,14 +37,16 @@
         .username { font-size: 18px; font-weight: bold; }
         .date { font-size: 14px; color: #8e8e8e; }
         .buttons { display: flex; gap: 10px; }
-        .link-btn { flex: 1; text-align: center; background-color: #0095f6; color: white; padding: 12px; text-decoration: none; border-radius: 6px; font-size: 15px; font-weight: bold; }
+        .link-btn { flex: 1; text-align: center; background-color: #0095f6; color: white; padding: 12px; text-decoration: none; border-radius: 6px; font-size: 15px; font-weight: bold; border: none; cursor: pointer; }
         .delete-btn { flex: 1; text-align: center; background-color: #ed4956; color: white; padding: 12px; border: none; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; }
+        .restore-btn { background-color: #28a745; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>סורק לא עוקבים</h1>
         
+        <!-- אזור ראשי -->
         <div class="upload-section" id="setupSection">
             <div class="form-group">
                 <label>מי סורק עכשיו?</label>
@@ -52,6 +57,7 @@
             </div>
             
             <button class="btn btn-success" id="loadSavedBtn" onclick="loadLastScan()" style="display: none;">טען רשימה מסריקה קודמת מהענן</button>
+            <button class="btn btn-secondary" id="manageIgnoreBtn" onclick="showIgnoreList()" style="display: none;">ניהול רשימת התעלמות (היסטוריה)</button>
             
             <div id="newScanSection" style="display: none; border-top: 1px solid #dbdbdb; padding-top: 20px; margin-top: 10px;">
                 <label style="color: #ed4956; margin-bottom: 15px;">או סריקה של נתונים חדשים מאינסטגרם:</label>
@@ -71,13 +77,21 @@
 
         <div id="loading">טוען נתונים מהענן, אנא להמתין...</div>
 
+        <!-- אזור תוצאות סריקה -->
         <div id="resultsSection" style="display: none;">
+            <button class="btn btn-back" onclick="backToMain()">חזרה למסך הראשי</button>
             <h2>לא עוקבים חזרה (<span id="counter">0</span>)</h2>
             <div id="cardsContainer"></div>
         </div>
 
-        <!-- תווית זיהוי גרסה לשבירת קאש -->
-        <div style="text-align: center; margin-top: 30px; color: #ccc; font-size: 13px;">גרסה 2.2 (עוקף זיכרון ותומך בנקודות)</div>
+        <!-- אזור ניהול רשימת התעלמות -->
+        <div id="ignoreListSection" style="display: none;">
+            <button class="btn btn-back" onclick="backToMain()">חזרה למסך הראשי</button>
+            <h2>היסטוריית מחיקות (<span id="ignoreCounter">0</span>)</h2>
+            <div id="ignoreCardsContainer"></div>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px; color: #ccc; font-size: 13px;">גרסה 2.3 (רשימת התעלמות חכמה ומיון תאריכים)</div>
     </div>
 
     <script>
@@ -91,6 +105,7 @@
             btnElement.classList.add('active');
             
             document.getElementById('loadSavedBtn').style.display = 'block';
+            document.getElementById('manageIgnoreBtn').style.display = 'block';
             document.getElementById('newScanSection').style.display = 'block';
         }
 
@@ -116,7 +131,6 @@
             });
         }
 
-        // עקיפת בעיית הנקודות בשמות משתמש מול פיירבייס
         function encodeUsername(username) {
             return username.replace(/\./g, '_DOT_');
         }
@@ -124,14 +138,114 @@
             return key.replace(/_DOT_/g, '.');
         }
 
+        function backToMain() {
+            document.getElementById('resultsSection').style.display = 'none';
+            document.getElementById('ignoreListSection').style.display = 'none';
+            document.getElementById('setupSection').style.display = 'block';
+        }
+
+        // ====== טיפול ברשימת ההתעלמות ======
+        async function showIgnoreList() {
+            document.getElementById('setupSection').style.display = 'none';
+            document.getElementById('loading').innerText = 'טוען היסטוריה מהענן...';
+            document.getElementById('loading').style.display = 'block';
+
+            try {
+                const timeNow = new Date().getTime();
+                const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json?t=${timeNow}`);
+                const ignoredData = await response.json();
+                
+                let ignoredUsersArray = [];
+
+                if (ignoredData && typeof ignoredData === 'object') {
+                    Object.keys(ignoredData).forEach(key => {
+                        let username = decodeUsername(key);
+                        let val = ignoredData[key];
+                        
+                        // תמיכה לאחור בפורמט הישן (true) מול החדש (אובייקט עם תאריכים)
+                        if (val === true) {
+                            ignoredUsersArray.push({ username: username, deletedAt: 0, dateString: 'תאריך לא ידוע (ישן)' });
+                        } else {
+                            ignoredUsersArray.push({ username: username, deletedAt: val.deletedAt || 0, dateString: val.dateString || '' });
+                        }
+                    });
+                }
+
+                // מיון מהחדש לישן
+                ignoredUsersArray.sort((a, b) => b.deletedAt - a.deletedAt);
+                renderIgnoreList(ignoredUsersArray);
+
+            } catch (error) {
+                alert('שגיאה בטעינת רשימת ההתעלמות.');
+                console.error(error);
+                backToMain();
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function renderIgnoreList(users) {
+            document.getElementById('ignoreListSection').style.display = 'block';
+            document.getElementById('ignoreCounter').innerText = users.length;
+            
+            const container = document.getElementById('ignoreCardsContainer');
+            container.innerHTML = ''; 
+
+            if (users.length === 0) {
+                container.innerHTML = '<p style="text-align: center;">אין משתמשים ברשימת ההתעלמות.</p>';
+                return;
+            }
+
+            users.forEach(user => {
+                const profileLink = `https://www.instagram.com/${user.username}/`;
+                const card = document.createElement('div');
+                card.className = 'user-card';
+                card.innerHTML = `
+                    <div class="username">${user.username}</div>
+                    <div class="date">${user.dateString !== 'תאריך לא ידוע (ישן)' ? 'נמחק ב: ' + user.dateString : user.dateString}</div>
+                    <div class="buttons">
+                        <a href="${profileLink}" target="_blank" class="link-btn" style="background-color: #8e8e8e;">פרופיל</a>
+                        <button class="link-btn restore-btn" onclick="restoreUser(this, '${user.username}')">החזר לרשימה</button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        async function restoreUser(button, username) {
+            if (!confirm('האם להחזיר את ' + username + ' כך שיופיע שוב בסריקות הבאות?')) return;
+            
+            const card = button.closest('.user-card');
+            card.style.opacity = '0.5';
+            
+            try {
+                const safeUsername = encodeUsername(username);
+                // מחיקת המשתמש מתיקיית ההתעלמות בענן
+                await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored/${safeUsername}.json`, {
+                    method: 'DELETE'
+                });
+                
+                card.style.display = 'none';
+                const currentCount = parseInt(document.getElementById('ignoreCounter').innerText);
+                document.getElementById('ignoreCounter').innerText = Math.max(0, currentCount - 1);
+            } catch (error) {
+                console.error('שגיאה בשחזור:', error);
+                card.style.opacity = '1';
+                alert('אירעה שגיאה בשחזור המשתמש.');
+            }
+        }
+        // ===================================
+
+
+        // ====== טיפול בסריקות ותוצאות ======
         async function loadLastScan() {
             document.getElementById('setupSection').style.display = 'none';
+            document.getElementById('loading').innerText = 'טוען סריקה אחרונה...';
             document.getElementById('loading').style.display = 'block';
 
             try {
                 const ignoredSet = new Set();
                 try {
-                    // הוספת חותמת זמן כדי למנוע מהדפדפן להשתמש בזיכרון ישן (Cache)
                     const timeNow = new Date().getTime();
                     const response = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored.json?t=${timeNow}`);
                     const ignoredData = await response.json();
@@ -141,7 +255,7 @@
                             ignoredSet.add(decodeUsername(key));
                         });
                     }
-                } catch (e) { console.log('אין רשימת התעלמות'); }
+                } catch (e) {}
 
                 const timeNow2 = new Date().getTime();
                 const scanResponse = await fetch(`${FIREBASE_DB_URL}/${currentProfile}_last_scan.json?t=${timeNow2}`);
@@ -234,7 +348,6 @@
                 document.getElementById('setupSection').style.display = 'block';
             } finally {
                 document.getElementById('loading').style.display = 'none';
-                document.getElementById('loading').innerText = 'טוען נתונים מהענן, אנא להמתין...';
             }
         }
 
@@ -272,10 +385,17 @@
             
             try {
                 const safeUsername = encodeUsername(username);
+                const timestamp = new Date().getTime();
+                const dateStr = new Date().toLocaleString('he-IL');
+
+                // שמירת המבנה החדש עם התאריכים
                 await fetch(`${FIREBASE_DB_URL}/${currentProfile}_ignored/${safeUsername}.json`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(true)
+                    body: JSON.stringify({
+                        deletedAt: timestamp,
+                        dateString: dateStr
+                    })
                 });
             } catch (error) {
                 console.error('שגיאה בעדכון מסד הנתונים:', error);
